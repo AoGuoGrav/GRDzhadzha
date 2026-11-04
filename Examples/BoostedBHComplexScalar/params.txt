@@ -13,12 +13,12 @@ plot_prefix = BoostedBHp_
 # restart_file = BoostedBH_000000.3d.hdf5
 
 # HDF5files are written every dt = L/N*dt_multiplier*checkpoint_interval
-checkpoint_interval = 100
+checkpoint_interval = 625
 # set to 0 to turn off plot files (except at t=0 and t=stop_time)
 # set to -1 to never ever print plotfiles
-plot_interval = 10
-num_plot_vars = 3
-plot_vars = phi_Re rhoLinMom sourceLinMom
+plot_interval = 300
+num_plot_vars = 5
+plot_vars = phi_Re phi_Im Pi_Re Pi_Im rhoEnergy
 
 # subpaths - specific directories for hdf5, pout, extraction data
 # (these are created at runtime)
@@ -37,12 +37,17 @@ print_progress_only_to_rank_0 = 1
 # Initial Data parameters
 
 # Scalar field Initial data
-scalar_mass = 0.05
-scalar_amplitude = 0.1
+# V = 1/2 mu^2 |phi|^2 + 1/4 lambda |phi|^4, only x = lambda phi0^2 / mu^2
+# matters; sound speed c_s0^2 = x / (2 + 3x), so this gives c_s0 = 0.171
+# and transition radius r_sg = 2M/c_s0^2 = 68M
+scalar_mass = 1.0
+scalar_amplitude = 0.2
+scalar_lambda = 1.6
 
 # Boosted BH initial data, boost in x direction
+# Mach number M0 = v/c_s0 = 1.2
 bh_mass = 1.0
-bh_velocity = 0.3 # in unit of c (i.e. 0<v<1)
+bh_velocity = 0.205 # in unit of c (i.e. 0<v<1)
 
 ################################################
 # Diagnostic extraction parameters
@@ -53,8 +58,8 @@ activate_extraction = 1
 
 # Set to match inner and outer radii above
 num_extraction_radii = 2
-extraction_levels = 0 0
-extraction_radii = 3.0 200.0
+extraction_levels = 3 1
+extraction_radii = 5.0 120.0
 
 num_points_phi = 36
 num_points_theta = 24
@@ -63,8 +68,8 @@ num_points_theta = 24
 # Default value is the same as activate_extraction
 # activate_excision = 1
 # By default these are set to the values of the extraction radii above
-# inner_r = 3.0
-# outer_r = 200.0
+# inner_r = 5.0
+# outer_r = 120.0
 
 #################################################
 # Grid parameters
@@ -80,17 +85,17 @@ N1 = 128
 N2 = 64
 N3 = 64
 
-L_full = 1024
+L_full = 512
 
 # Maximum number of times you can regrid above coarsest level
-max_level = 6 # There are (max_level+1) grids, so min is zero
+max_level = 5 # There are (max_level+1) grids, so min is zero
 
 # Frequency of regridding at each level and thresholds on the tagging
 # Need one for each level except the top one, ie max_level items
 # Generally you do not need to regrid frequently on every level
 # in this example turn off regridding on all levels
-# Level Regridding: 0   1   2   3   4   5
-regrid_interval   = 0   0   0   0   0   0
+# Level Regridding: 0   1   2   3   4
+regrid_interval   = 0   0   0   0   0
 # regrid_threshold  = 0.5
 
 # Max and min box sizes
@@ -143,8 +148,9 @@ extrapolation_order = 0
 # Evolution parameters
 
 # dt will be dx*dt_multiplier on each grid level
-dt_multiplier = 0.1
-stop_time = 250.0
+# the field oscillation needs omega * dt_coarsest < 0.2
+dt_multiplier = 0.04
+stop_time = 2000.0
 #max_steps = 4
 
 nan_check = 1

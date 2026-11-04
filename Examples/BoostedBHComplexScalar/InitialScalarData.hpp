@@ -19,6 +19,7 @@ class InitialScalarData
     struct params_t
     {
         double mass;
+        double lambda;
         double amplitude;
     };
 
@@ -32,11 +33,15 @@ class InitialScalarData
         ComplexScalarField<>::Vars<data_t> vars;
         VarsTools::assign(vars, 0.);
 
-        // set the field vars
+        // set the field vars on the circular orbit phi = A e^{i omega t},
+        // omega^2 = m^2 + lambda A^2, so that |phi| stays constant
+        const double omega =
+            sqrt(m_params.mass * m_params.mass +
+                 m_params.lambda * m_params.amplitude * m_params.amplitude);
         vars.phi_Re = m_params.amplitude;
         vars.phi_Im = 0;
         vars.Pi_Re = 0;
-        vars.Pi_Im = m_params.amplitude * m_params.mass;
+        vars.Pi_Im = m_params.amplitude * omega;
 
         current_cell.store_vars(vars);
     }

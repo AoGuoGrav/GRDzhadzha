@@ -27,15 +27,18 @@ class ComplexScalarPotential
                            data_t &dVdphi_im, const vars_t<data_t> &vars) const
     {
         // The potential value at phi
-        // 1/2 m^2 phi^2
+        // 1/2 m^2 |phi|^2 + 1/4 lambda |phi|^4
         const double mu = m_initial_params.mass;
-        V_of_phi = 0.5 * mu * mu * vars.phi_Re * vars.phi_Re +
-                   0.5 * mu * mu * vars.phi_Im * vars.phi_Im;
+        const double lambda = m_initial_params.lambda;
+        const data_t mod_phi2 =
+            vars.phi_Re * vars.phi_Re + vars.phi_Im * vars.phi_Im;
+        V_of_phi =
+            0.5 * mu * mu * mod_phi2 + 0.25 * lambda * mod_phi2 * mod_phi2;
 
         // The potential gradient at phi wrt the real and im field
-        // m^2 phi
-        dVdphi_re = mu * mu * vars.phi_Re;
-        dVdphi_im = mu * mu * vars.phi_Im;
+        // (m^2 + lambda |phi|^2) phi
+        dVdphi_re = (mu * mu + lambda * mod_phi2) * vars.phi_Re;
+        dVdphi_im = (mu * mu + lambda * mod_phi2) * vars.phi_Im;
     }
 };
 
