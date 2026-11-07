@@ -13,6 +13,7 @@
 // Problem specific includes:
 #include "BoostedBH.hpp"
 #include "InitialScalarData.hpp"
+#include <algorithm>
 
 class SimulationParameters : public FixedBGSimulationParametersBase
 {
@@ -35,6 +36,35 @@ class SimulationParameters : public FixedBGSimulationParametersBase
         pp.load("bh_mass", bg_params.mass, 1.0);
         pp.load("bh_velocity", bg_params.velocity, 0.0);
         pp.load("bh_center", bg_params.center, center);
+
+        // optional smooth ramp of the BH velocity from bh_velocity to
+        // bh_velocity_final, between ramp_start and ramp_start + ramp_duration
+        pp.load("bh_velocity_final", bh_velocity_final, bg_params.velocity);
+        pp.load("ramp_start", ramp_start, 0.0);
+        pp.load("ramp_duration", ramp_duration, 0.0);
+    }
+
+    //! The BH velocity at time a_time, a C^2 step between the initial and
+    //! final velocities (constant if ramp_duration <= 0)
+    double bh_velocity_at(const double a_time) const
+    {
+        if (ramp_duration <= 0.0)
+            return bg_params.velocity;
+        const double s =
+            std::min(std::max((a_time - ramp_start) / ramp_duration, 0.0), 1.0);
+        const double step = s * s * s * (10.0 - 15.0 * s + 6.0 * s * s);
+        return bg_params.velocity +
+               (bh_velocity_final - bg_params.velocity) * step;
+    }
+
+    //! The background params at time a_time. The metric is the stationary
+    //! boosted BH with the instantaneous velocity, so dgamma_ij/dt ~ dv/dt
+    //! is neglected in K_ij, which is fine for a slow ramp
+    BoostedBH::params_t bg_params_at(const double a_time) const
+    {
+        BoostedBH::params_t params = bg_params;
+        params.velocity = bh_velocity_at(a_time);
+        return params;
     }
 
     void check_params()
@@ -54,6 +84,14 @@ class SimulationParameters : public FixedBGSimulationParametersBase
                        "should be >= 0.0 (repulsive self-interaction)");
         warn_parameter("bh_mass", bg_params.mass, bg_params.mass >= 0.0,
                        "should be >= 0.0");
+        check_parameter("bh_velocity_final", bh_velocity_final,
+                        std::abs(bh_velocity_final) < 1.0,
+                        "must be in the range -1.0 < velocity < 1.0");
+        warn_parameter("ramp_duration", ramp_duration,
+                       ramp_duration > 0.0 ||
+                           bh_velocity_final == bg_params.velocity,
+                       "should be > 0 for the velocity to reach "
+                       "bh_velocity_final");
         FOR(idir)
         {
             std::string name = "bh_center[" + std::to_string(idir) + "]";
@@ -68,7 +106,9 @@ class SimulationParameters : public FixedBGSimulationParametersBase
     // Collection of parameters necessary for the initial conditions
     InitialScalarData::params_t initial_params;
     // Collection of parameters necessary for the metric background
+    // (bg_params.velocity is the initial velocity of the ramp)
     BoostedBH::params_t bg_params;
+    double bh_velocity_final, ramp_start, ramp_duration;
 };
 
 #endif /* SIMULATIONPARAMETERS_HPP_ */

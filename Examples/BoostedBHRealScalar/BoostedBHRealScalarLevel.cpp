@@ -39,7 +39,7 @@ void BoostedBHRealScalarLevel::initialData()
     // First set everything to zero, then set the value of the conformal factor
     // This is just for the diagnostics
     SetValue set_zero(0.0);
-    BoostedBH boosted_bh(m_p.bg_params, m_dx); // just calculates chi
+    BoostedBH boosted_bh(m_p.bg_params_at(m_time), m_dx); // just calculates chi
     auto compute_pack = make_compute_pack(set_zero, boosted_bh);
     BoxLoops::loop(compute_pack, m_state_diagnostics, m_state_diagnostics,
                    SKIP_GHOST_CELLS);
@@ -72,7 +72,7 @@ void BoostedBHRealScalarLevel::specificPostTimeStep()
         fillAllGhosts();
         ScalarPotential potential(m_p.initial_params);
         ScalarFieldWithPotential scalar_field(potential);
-        BoostedBH boosted_bh(m_p.bg_params, m_dx);
+        BoostedBH boosted_bh(m_p.bg_params_at(m_time), m_dx);
         EnergyConservation<ScalarFieldWithPotential, BoostedBH> energies(
             scalar_field, boosted_bh, m_dx, m_p.center);
         int direction = 0; // we want the x direction for the momentum
@@ -112,14 +112,15 @@ void BoostedBHRealScalarLevel::specificPostTimeStep()
             integral_file.remove_duplicate_time_data();
 
             std::vector<double> data_for_writing = {
-                rhoEnergy_sum, rhoLinMom_sum, sourceLinMom_sum};
+                rhoEnergy_sum, rhoLinMom_sum, sourceLinMom_sum,
+                m_p.bh_velocity_at(m_time)};
 
             // write data
             if (first_step)
             {
-                integral_file.write_header_line({"Energy density.",
-                                                 "Lin. Mom. density",
-                                                 "Lin. Mom. source"});
+                integral_file.write_header_line(
+                    {"Energy density.", "Lin. Mom. density", "Lin. Mom. source",
+                     "BH velocity"});
             }
             integral_file.write_time_data_line(data_for_writing);
         }
@@ -151,7 +152,7 @@ void BoostedBHRealScalarLevel::specificEvalRHS(GRLevelData &a_soln,
     // and background_t = BoostedBH
     ScalarPotential potential(m_p.initial_params);
     ScalarFieldWithPotential scalar_field(potential);
-    BoostedBH boosted_bh(m_p.bg_params, m_dx);
+    BoostedBH boosted_bh(m_p.bg_params_at(a_time), m_dx);
     MatterEvolution<ScalarFieldWithPotential, BoostedBH> my_evolution(
         scalar_field, boosted_bh, m_p.sigma, m_dx, m_p.center);
     BoxLoops::loop(my_evolution, a_soln, a_rhs, SKIP_GHOST_CELLS);
