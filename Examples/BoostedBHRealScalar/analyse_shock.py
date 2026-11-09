@@ -336,7 +336,8 @@ def shock_position(run, d, rr, mm, threshold):
     return r_rho, r_mach, lam_rip, m_far, np.median(R[far])
 
 
-def plot_map(run, t, patches, xc, v_bh, out, step):
+def map_figure(run, t, patches, xc, v_bh):
+    """rho/rho0 and Mach maps on the z = 0 plane (1300 x 560 px at dpi 100)"""
     M0 = v_bh / run.cs0
     fig, axs = plt.subplots(1, 2, figsize=(13, 5.6))
     for ax, which in zip(axs, ("rho", "mach")):
@@ -375,6 +376,11 @@ def plot_map(run, t, patches, xc, v_bh, out, step):
         fontsize=9,
     )
     fig.tight_layout()
+    return fig
+
+
+def plot_map(run, t, patches, xc, v_bh, out, step):
+    fig = map_figure(run, t, patches, xc, v_bh)
     fig.savefig(os.path.join(out, f"maps_{step:06d}.png"), dpi=100)
     plt.close(fig)
 
