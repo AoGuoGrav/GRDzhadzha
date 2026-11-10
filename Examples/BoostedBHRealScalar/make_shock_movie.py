@@ -2,11 +2,14 @@
 
 usage:
     python make_shock_movie.py RUNDIR/params.txt [--out movie.mp4] [--fps 8]
-                               [--every N] [--frames-dir DIR]
+                               [--every N] [--frames-dir DIR] [--view near|full]
     python make_shock_movie.py --from-frames DIR [--out movie.mp4] [--fps 8]
 
 Every frame shows the same rho/rho0 and Mach maps as analyse_shock.py (z = 0
-plane, BH frame using the BH velocity at that time), and the frames are
+plane, BH frame using the BH velocity at that time): --view near (default) the
++-3.5 r_sg maps_<step>.png, --view full the whole-domain level-0
+maps_full_<step>.png, which is where the Mach cone and the Bogoliubov ripples
+of a dispersive (small mu M) run show up. The frames are
 encoded as an H.264 mp4 (yuv420p, plays in QuickTime and browsers) with the
 ffmpeg binary that comes with imageio-ffmpeg (pip install imageio-ffmpeg).
 
@@ -27,7 +30,13 @@ import matplotlib.image as mpimg  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyse_shock import Run, map_figure, read_layer  # noqa: E402
+from analyse_shock import (  # noqa: E402
+    Run,
+    full_map_figure,
+    level0_grid,
+    map_figure,
+    read_layer,
+)
 
 DPI = 100  # map_figure is 13 x 5.6 inches -> 1300 x 560 pixels
 
@@ -59,7 +68,7 @@ def figure_rgb(fig):
     return np.ascontiguousarray(np.asarray(fig.canvas.buffer_rgba())[..., :3])
 
 
-def frames_from_run(params, every):
+def frames_from_run(params, every, view="near"):
     """yield (step, RGB image) for every N-th plot file of the run"""
     run = Run(params)
     files = sorted(
@@ -73,7 +82,16 @@ def frames_from_run(params, every):
         if run.field is None:
             run.set_field("complex" if "phi_Re" in names else "real")
         xc = run.num("center", 0.5 * x_extent)
-        fig = map_figure(run, t, patches, xc, float(run.v_bh(t)))
+        v = float(run.v_bh(t))
+        if view == "full":
+            x, y, R, M = level0_grid(run, patches, xc, v)
+            fig = full_map_figure(
+                run, x, y, R, M, v,
+                f"{run.field}  t = {t:.0f} M, v_BH = {v:.4f}, "
+                f"M0 = {v / run.cs0:.2f}, level 0",
+            )
+        else:
+            fig = map_figure(run, t, patches, xc, v)
         img = figure_rgb(fig)
         plt.close(fig)
         print(f"frame {n + 1}/{len(files)}: step {step}, t = {t:.0f}", flush=True)
@@ -101,6 +119,12 @@ def main():
     ap.add_argument("--fps", type=float, default=8)
     ap.add_argument("--every", type=int, default=1, help="use every N-th file")
     ap.add_argument("--frames-dir", help="also write the frames as PNG here")
+    ap.add_argument(
+        "--view",
+        choices=("near", "full"),
+        default="near",
+        help="near: +-3.5 r_sg maps; full: whole domain from level 0",
+    )
     args = ap.parse_args()
     if bool(args.params) == bool(args.from_frames):
         ap.error("give either a params file or --from-frames DIR")
@@ -108,7 +132,7 @@ def main():
     if args.from_frames:
         frames = frames_from_dir(args.from_frames)
     else:
-        frames = frames_from_run(args.params, args.every)
+        frames = frames_from_run(args.params, args.every, args.view)
     if args.frames_dir:
         os.makedirs(args.frames_dir, exist_ok=True)
 

@@ -1,0 +1,180 @@
+# See the wiki page for an explanation of the params!
+# https://github.com/GRChombo/GRChombo/wiki/Guide-to-parameters
+
+#################################################
+# Filesystem parameters
+
+verbosity = 0
+
+# location / naming of output files
+output_path = "" # Main path for all files. Must exist!
+chk_prefix = BoostedBHRampMu0p45_
+plot_prefix = BoostedBHRampMu0p45p_
+# restart_file = BoostedBH_000000.3d.hdf5
+
+# HDF5files are written every dt = L/N*dt_multiplier*checkpoint_interval
+checkpoint_interval = 1420
+# set to 0 to turn off plot files (except at t=0 and t=stop_time)
+# set to -1 to never ever print plotfiles
+plot_interval = 153 # 53.9 M = 8.00 periods of rho (pi/omega0): same phase in every frame
+num_plot_vars = 2
+plot_vars = phi Pi
+
+# subpaths - specific directories for hdf5, pout, extraction data
+# (these are created at runtime)
+hdf5_subpath = "hdf5"
+pout_subpath = "pout"
+data_subpath = "data"
+
+# change the name of output files
+# pout_prefix = "pout"
+print_progress_only_to_rank_0 = 1
+
+# ignore_checkpoint_name_mismatch = 0
+# write_plot_ghosts = 0
+
+#################################################
+# Initial Data parameters
+
+# Scalar field Initial data
+# Units: the BH mass, M = 1 (so scalar_mass = mu M, scalar_lambda = lambda M^2)
+# V = 1/2 mu^2 phi^2 + 1/4 lambda phi^4. On the fixed background only
+# x = lambda phi0^2 / mu^2 = 0.101 and mu matter (lambda and rho trade off:
+# this is rho0 M^2 = 1e-4 with lambda M^2 = 21.8, or 1e-5 with 218)
+# c_NR = sqrt(3x/8) = 0.195, c_s0 = c_NR (1 - 1.4 c_NR^2) = 0.184
+# r_sg = 2M/c_s0^2 = 59 M, sound-crossing time r_sg/c_s0 = 319 M,
+# omega0 = mu sqrt(1 + 3x/4) = 0.467, healing length xi = 1/(mu c_s0) = 12 M
+# Shock regime at the end of the ramp (v = 0.2767): beta = mu M/v = 1.63,
+# r_BHL/xi = (2M/v^2)/xi = 2.17, xi/r_sg = 0.21 (fluid-like, but transitional;
+# mu M = 1 had beta = 3.25, mu M = 0.1 had 0.23)
+scalar_mass = 0.45
+scalar_amplitude = 0.03065773
+scalar_lambda = 21.8
+
+# Boosted BH initial data, boost in x direction
+# Initial velocity: one BH of the equal-mass d0 ~ 12M binary of
+# Aurrekoetxea et al. 2409.01937 (GRChombo BinaryBH params: |P| = 0.0842 per
+# BH of mass 0.5, so v = P/(gamma m) = 0.166)
+# The BH velocity is ramped smoothly (C^2 step) from bh_velocity to
+# bh_velocity_final over [ramp_start, ramp_start + ramp_duration]:
+# Mach number M0 = v/c_s0 goes from 0.90 (subsonic) to 1.50 (supersonic, above
+# the detached/attached threshold M_t = (3 f* c_s0)^(-1/3) = 1.40); Mach angle
+# asin(c_s0/v) = 42 deg at the end. Ramp starts after ~4 and lasts ~10
+# sound-crossing times; ~8 more after the ramp
+bh_mass = 1.0
+bh_velocity = 0.166 # in unit of c (i.e. 0<v<1)
+bh_velocity_final = 0.2767
+ramp_start = 1300.0
+ramp_duration = 3200.0
+
+################################################
+# Diagnostic extraction parameters
+
+# For flux (surface) extraction
+activate_extraction = 1
+# write_extraction = 0
+
+# Set to match inner and outer radii above
+num_extraction_radii = 2
+extraction_levels = 3 1
+extraction_radii = 5.0 120.0
+
+num_points_phi = 36
+num_points_theta = 24
+
+# For volume integrals
+# Default value is the same as activate_extraction
+# activate_excision = 1
+# By default these are set to the values of the extraction radii above
+# inner_r = 5.0
+# outer_r = 120.0
+
+#################################################
+# Grid parameters
+
+# 'N' is the number of subdivisions in each direction of a cubic box
+# 'L' is the length of the longest side of the box, dx_coarsest = L/N
+# NB - If you use reflective BC and want to specify the subdivisions and side
+# of the box were there are no symmetries, specify 'N_full' and 'L_full' instead
+# NB - if you have a non-cubic grid, you can specify 'N1' or 'N1_full',
+# 'N2' or 'N2_full' and 'N3' or 'N3_full' ( then dx_coarsest = L/N(max) )
+# NB - the N values need to be multiples of the block_factor
+N1 = 192
+N2 = 96
+N3 = 96
+
+L_full = 768
+
+# Maximum number of times you can regrid above coarsest level
+max_level = 5 # There are (max_level+1) grids, so min is zero
+
+# Frequency of regridding at each level and thresholds on the tagging
+# Need one for each level except the top one, ie max_level items
+# Generally you do not need to regrid frequently on every level
+# in this example turn off regridding on all levels
+# Level Regridding: 0   1   2   3   4
+regrid_interval   = 0   0   0   0   0
+# regrid_threshold  = 0.5
+
+# Max and min box sizes
+max_box_size = 16
+min_box_size = 16
+
+# Don't add a buffer to the tagged cells since
+# this example uses a fixed grid
+tag_buffer_size = 0
+
+# center = 512.0 0.0 0.0 # defaults to center of the grid
+
+#################################################
+# Boundary Conditions parameters
+
+#Periodic directions - 0 = false, 1 = true
+isPeriodic = 0 0 0
+# if not periodic, then specify the boundary type
+# 0 = static, 1 = sommerfeld, 2 = reflective
+# 3 = extrapolating, 4 = mixed
+# (see BoundaryConditions.hpp for details)
+hi_boundary = 3 3 3
+lo_boundary = 3 2 2
+
+# if reflective boundaries selected, must set
+# parity of all vars (in order given by UserVariables.hpp)
+# 0 = even
+# 1,2,3 = odd x, y, z
+# 4,5,6 = odd xy, yz, xz
+# 7     = odd xyz
+vars_parity            = 0 0       #phi and Pi
+vars_parity_diagnostic = 0 0 0     #chi, rhoLinMom and rhoEnergy
+		         0 0 0     #fluxLinMom, fluxEnergy and sourceLinMom
+
+# if sommerfeld boundaries selected, must select
+# non zero asymptotic values
+num_nonzero_asymptotic_vars = 0
+nonzero_asymptotic_vars = chi
+nonzero_asymptotic_values = 1.0
+
+# if you are using extrapolating BC:
+extrapolation_order = 0
+
+# if mixed boundaries selected, must specify which are extrapolating
+# (the rest are assumed to be all sommerfeld)
+#num_extrapolating_vars = 2
+#extrapolating_vars = phi Pi
+
+#################################################
+# Evolution parameters
+
+# dt will be dx*dt_multiplier on each grid level
+# the field oscillation needs omega * dt_coarsest < 0.2; here
+# omega0 * dt_coarsest = 0.467 * 4 * 0.088 = 0.164 (as in the mu M = 1 run)
+dt_multiplier = 0.088
+stop_time = 7000.0
+#max_steps = 4
+
+nan_check = 1
+
+# coefficient for KO numerical dissipation
+sigma = 0.5
+
+#################################################

@@ -3,6 +3,8 @@
 usage:
     python analyse_shock.py RUNDIR/params.txt [--out DIR] [--maps-every N]
                             [--maps-steps 2400,4800] [--no-hdf5]
+                            [--shock auto|on|off] [--avg-from T]
+                            [--evo-times 600,1200,1800]
 
 All physical and grid parameters are read from the params file, so this works
 for the real (phi, Pi) and the complex (phi_Re, phi_Im, Pi_Re, Pi_Im) examples
@@ -10,12 +12,38 @@ and for a time-dependent BH velocity (bh_velocity -> bh_velocity_final ramp).
 The BH velocity of each snapshot is used to go to the BH frame, so the Mach
 number M = |u| / c_s is the instantaneous one.
 
+Regime: the healing length xi = 1/(mu c_s0) is compared with r_sg = 2M/c_s0^2.
+For xi/r_sg < 0.3 (fluid regime, e.g. mu M = 1) the upstream shock of Boudon et
+al. is searched for. Above that (dispersive regime, e.g. mu M = 0.1) quantum
+pressure smears it out, the supersonic flow instead carries Bogoliubov-Cherenkov
+ripples standing upstream of the BH with wavelength lambda_B(v), and the shock
+columns are left empty (--shock on forces the search, --shock off skips it).
+
 Outputs (in --out, default RUNDIR/analysis):
   timeseries.png / timeseries.txt   accretion rate, fluxes, energy balance
   accretion_vs_mach.png             accretion rate vs instantaneous M0(t)
-  shock_vs_time.png / .txt          upstream shock position vs t and M0(t)
-  maps_<step>.png, axis_<step>.png  rho/rho0 and Mach maps on the z=0 plane
+  shock_vs_time.png / .txt          upstream shock position vs t and M0(t), and
+                                    the measured vs predicted ripple wavelength
+  maps_<step>.png, axis_<step>.png  rho/rho0 and Mach maps on the z=0 plane,
+                                    near zone (+-3.5 r_sg)
+  maps_full_<step>.png              the same maps on the whole domain (level 0)
+  evolution.png                     whole-domain rho/rho0 (top) and Mach
+                                    (bottom) at a few times, left to right
+  subsonic.png                      the same at 12 times while the BH is
+                                    still subsonic (two strips)
+  cone_formation.png                the same at 12 times from M0 = 0.9 to a
+                                    quarter ramp after the ramp ends (two
+                                    strips), when the run crosses Mach 1
+  late_average.png / .npz           level-0 maps averaged over the snapshots at
+                                    t >= --avg-from (default: the last 2/3 of
+                                    the constant-velocity phase)
+  cone_profile.png / .txt           downstream <rho/rho0>(theta) in radial shells:
+                                    measured vs predicted Mach-cone angle
   axis_profiles.npz                 rho/rho0 and Mach along the upstream axis
+
+Single snapshots alias the 2 omega0 oscillation of rho unless the plot cadence
+is a multiple of pi/omega0; the script says when it is not and which
+plot_interval would sample a fixed phase.
 
 Density: local oscillator energy rho = 1/2 Pi^2 + V (plus |.|^2 for complex),
 without gradient energy and metric factors, so it is unreliable for r < ~10M.
@@ -34,6 +62,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 F_STAR = 0.66  # Boudon et al. radial accretion constant (real field)
+FLUID_MAX = 0.3  # xi / r_sg below which the flow is fluid-like (shocks)
 
 
 def read_params(fn):
@@ -89,6 +118,33 @@ class Run:
         self.rsg = 2 * self.M / self.cs0**2
         self.Mdot_rad = 12 * math.pi * F_STAR * self.rho0 * self.M**2 / self.cs0**2
         self.M_t = (3 * F_STAR * self.cs0) ** (-1.0 / 3.0)
+        self.xi = 1 / (mu * self.cs0)  # healing length
+        self.fluid = self.xi / self.rsg < FLUID_MAX
+        # coupling g of the linearised (rotating-wave) KG equation around the
+        # homogeneous oscillation, (k^2 - W^2)^2 + 2 g (k^2 - W^2) = 4 omega0^2 W^2,
+        # fixed so that its k -> 0 sound speed g / (2 omega0^2 + g) is c_s0^2
+        self.g_bog = 2 * self.omega0**2 * self.cs0**2 / (1 - self.cs0**2)
+
+    def regime(self):
+        kind = "fluid" if self.fluid else "dispersive"
+        return f"{kind} regime: xi = 1/(mu c_s0) = {self.xi:.1f} M, xi/r_sg = {self.xi / self.rsg:.2f}"
+
+    def lambda_B(self, v):
+        """wavelength (on the grid, i.e. in the DM frame) of the Bogoliubov
+        ripples that stand still in the frame of a BH moving at v: phase
+        velocity W/k = v on the axis. Exists only for v > c_s0, else nan"""
+        v = float(v)
+        q = 4 * self.omega0**2 * v**2 - 2 * self.g_bog * (1 - v**2)
+        return 2 * math.pi * (1 - v**2) / math.sqrt(q) if q > 0 else np.nan
+
+    def mach_angle(self, v):
+        """Mach half-angle asin(c_s0/v) in degrees, nan when subsonic. The grid
+        measures lengths in the DM rest frame (the boosted metric is length-
+        contracted along x and the far DM is at rest on it), where sound moves
+        isotropically at c_s0, so this is exact on the maps; the same cone in
+        the BH frame would be narrower, asin(gamma_s c_s0 / (gamma_v v))"""
+        v = float(v)
+        return math.degrees(math.asin(self.cs0 / v)) if v > self.cs0 else np.nan
 
     @staticmethod
     def cs_real(x):
@@ -139,6 +195,19 @@ class Run:
 
 # ---------------------------------------------------------------- time series
 def running_mean(a, w):
+    """centred boxcar mean, nan where the window does not fit: padding an
+    oscillating signal with its end values puts spikes at both ends"""
+    w = max(1, int(w))
+    out = np.full(len(a), np.nan)
+    if len(a) >= w:
+        out[w // 2 : w // 2 + len(a) - w + 1] = np.convolve(
+            a, np.ones(w) / w, mode="valid"
+        )
+    return out
+
+
+def smooth_edge(a, w):
+    """centred boxcar mean padded with the end values (for spatial profiles)"""
     w = max(1, int(w))
     pad = np.pad(a, (w // 2, w - 1 - w // 2), mode="edge")
     return np.convolve(pad, np.ones(w) / w, mode="valid")
@@ -173,6 +242,7 @@ def timeseries(run, out):
             f"# {run.field}: rho0={run.rho0:.6g} cs0={run.cs0:.4f} "
             f"rsg={run.rsg:.1f} Mdot_rad(F*={F_STAR})={run.Mdot_rad:.3f} "
             f"M_t={run.M_t:.3f}\n"
+            f"# {run.regime()}\n"
             f"# energy-balance residual at end: {resid[-1]:.4g} "
             f"({resid[-1] / Esh[0]:.2e} of E0)\n"
             "# t  v_BH  M0  Mdot(r_in)  inflow(r_out)  Pflux(r_in)  Psource"
@@ -307,32 +377,47 @@ def axis_profile(run, patches, xc, v_bh):
     return x[keep] - xc, rr[keep], mm[keep]
 
 
-def shock_position(run, d, rr, mm, threshold):
-    """upstream shock from profiles smoothed over one ripple wavelength"""
+def shock_position(run, d, rr, mm, threshold, v_bh=None, find_shock=True):
+    """upstream shock from profiles smoothed over one ripple wavelength.
+    The ripple wavelength is measured on the upstream axis: in the fluid
+    regime near the shock (0.8-2.2 r_sg, wavelengths < 60 M, as before); in
+    the dispersive regime from 0.8 r_sg over at least four predicted
+    wavelengths lambda_B(v_bh), with a zero-padded FFT"""
     ok = np.isfinite(rr) & np.isfinite(mm) & (np.abs(d) > 6)
     xu = np.arange(10, d[ok].max(), 0.25)
     R = np.interp(xu, d[ok], rr[ok])
     Mc = np.interp(xu, d[ok], mm[ok])
-    band = (xu > 0.8 * run.rsg) & (xu < 2.2 * run.rsg)
+    lam_B = run.lambda_B(v_bh) if v_bh is not None else np.nan
+    long_band = not run.fluid and np.isfinite(lam_B)
+    if long_band:  # kept off the upstream boundary (lambda_B -> inf as v -> c_s0)
+        hi = max(2.2 * run.rsg, 0.8 * run.rsg + 4 * lam_B)
+        band = (xu > 0.8 * run.rsg) & (xu < min(hi, 0.9 * xu.max()))
+    else:
+        band = (xu > 0.8 * run.rsg) & (xu < 2.2 * run.rsg)
+    nb = band.sum()
     lam_rip = np.nan
-    if band.sum() > 16 and np.ptp(R[band]) > 1e-3:
-        y = (R[band] - R[band].mean()) * np.hanning(band.sum())
-        k = np.fft.rfftfreq(band.sum(), 0.25)
-        P = np.abs(np.fft.rfft(y)) ** 2
-        sel = k > 1 / 60
+    # (dispersive and subsonic: no standing ripples, nothing to measure)
+    if (run.fluid or long_band) and nb > 16 and np.ptp(R[band]) > 1e-3:
+        y = (R[band] - R[band].mean()) * np.hanning(nb)
+        nfft = 8 * nb if long_band else nb  # zero padding: interpolated peak
+        k = np.fft.rfftfreq(nfft, 0.25)
+        P = np.abs(np.fft.rfft(y, nfft)) ** 2
+        sel = k > (2 / (0.25 * nb) if long_band else 1 / 60)
         lam_rip = 1 / k[sel][np.argmax(P[sel])]
-    xi = 1 / (run.mu * run.cs0)  # healing length
-    w = int(round(max(lam_rip if np.isfinite(lam_rip) else math.pi * xi, 8) / 0.25))
-    Rs = running_mean(R, w)
-    Ms = running_mean(Mc, w)
-    above = np.where(Rs > threshold)[0]
-    sub = np.where(Ms < 1)[0]
-    r_rho = xu[above.max()] if len(above) else np.nan
-    r_mach = xu[sub.max()] if len(sub) else np.nan
     far = xu > 0.85 * xu.max()
     m_far = np.median(Mc[far])
-    if m_far <= 1:  # subsonic upstream: no shock, only smooth compression
-        r_rho = r_mach = np.nan
+    r_rho = r_mach = np.nan
+    # no shock for a subsonic upstream (only smooth compression), and none
+    # looked for in the dispersive regime, where the upstream ripples would
+    # trigger the threshold
+    if find_shock and m_far > 1:
+        w = int(round(max(lam_rip if np.isfinite(lam_rip) else math.pi * run.xi, 8) / 0.25))
+        Rs = smooth_edge(R, w)
+        Ms = smooth_edge(Mc, w)
+        above = np.where(Rs > threshold)[0]
+        sub = np.where(Ms < 1)[0]
+        r_rho = xu[above.max()] if len(above) else np.nan
+        r_mach = xu[sub.max()] if len(sub) else np.nan
     return r_rho, r_mach, lam_rip, m_far, np.median(R[far])
 
 
@@ -357,7 +442,6 @@ def map_figure(run, t, patches, xc, v_bh):
             r = np.linspace(0, 4, 50)
             for sgn in (1, -1):
                 ax.plot(-r * math.cos(thc), sgn * r * math.sin(thc), "w--", lw=1)
-        ax.add_patch(plt.Circle((0, 0), 1.0, fill=False, color="w", lw=0.6, ls=":"))
         ax.set_xlim(-3.5, 3.5)
         ax.set_ylim(-2.5, 2.5)
         ax.set_aspect("equal")
@@ -372,7 +456,7 @@ def map_figure(run, t, patches, xc, v_bh):
     fig.suptitle(
         f"{run.field}  t = {t:.0f} M,  v_BH = {v_bh:.4f},  M0 = {M0:.2f}  "
         f"(c_s0 = {run.cs0:.3f}, r_sg = {run.rsg:.0f} M); "
-        "dashed: Mach cone, dotted: r = r_sg",
+        "dashed: Mach cone",
         fontsize=9,
     )
     fig.tight_layout()
@@ -385,33 +469,327 @@ def plot_map(run, t, patches, xc, v_bh, out, step):
     plt.close(fig)
 
 
-def snapshots(run, out, maps_every, maps_steps, threshold):
+# ------------------------------------------------- whole domain and the cone
+def level0_grid(run, patches, xc, v_bh):
+    """rho/rho0 and Mach on the z = 0 plane of level 0, where Chombo has
+    averaged the finer levels down: (x - xc, y, R[y, x], M[y, x])"""
+    p0 = [p for p in patches if p[0] == 0]
+    dx = p0[0][1]
+    nx = int(round(max(p[2][-1] for p in p0) / dx + 0.5))
+    ny = int(round(max(p[3][-1] for p in p0) / dx + 0.5))
+    R = np.full((ny, nx), np.nan)
+    M = np.full((ny, nx), np.nan)
+    for _, dx, xs, ys, c in p0:
+        rr, mm = run.derived(c, dx, v_bh)
+        i0, j0 = int(round(xs[0] / dx - 0.5)), int(round(ys[0] / dx - 0.5))
+        R[j0 : j0 + len(ys), i0 : i0 + len(xs)] = rr
+        M[j0 : j0 + len(ys), i0 : i0 + len(xs)] = mm
+    return (np.arange(nx) + 0.5) * dx - xc, (np.arange(ny) + 0.5) * dx, R, M
+
+
+MACH_NORM = (0.3, 1.0, 2.5)  # (min, white, max) of the whole-domain Mach maps
+
+
+def mach_kw(center=MACH_NORM):
+    """RdBu_r Mach colour map with white at center[1] (M = 1): blue is
+    subsonic, red supersonic"""
+    from matplotlib.colors import TwoSlopeNorm
+
+    return dict(cmap="RdBu_r", norm=TwoSlopeNorm(center[1], center[0], center[2]))
+
+
+def draw_cone(ax, run, v_bh, length):
+    """the Mach cone asin(c_s0/v) from the BH downstream, dashed"""
+    th = run.mach_angle(v_bh)
+    if np.isfinite(th):
+        c, s = math.cos(math.radians(th)), math.sin(math.radians(th))
+        for sgn in (1, -1):
+            ax.plot([0, -length * c], [0, sgn * length * s], "w--", lw=1)
+
+
+def full_map_figure(run, x, y, R, M, v_bh, title, rho_range=(0.8, 1.4)):
+    """level-0 rho/rho0 and Mach maps of the whole z = 0 plane (mirrored in y)"""
+    fig, axs = plt.subplots(1, 2, figsize=(13, 5.6))
+    kws = (dict(cmap="viridis", vmin=rho_range[0], vmax=rho_range[1]), mach_kw())
+    labs = ("rho/rho0", "Mach (BH frame), white: M = 1")
+    for ax, A, kw, lab in zip(axs, (R, M), kws, labs):
+        for sgn in (1, -1):
+            im = ax.pcolormesh(x, sgn * y, A, shading="auto", **kw)
+        fig.colorbar(im, ax=ax, shrink=0.8, label=lab)
+        draw_cone(ax, run, v_bh, max(-x[0], x[-1]))
+        ax.set_xlim(x[0], x[-1])
+        ax.set_ylim(-y[-1], y[-1])
+        ax.set_aspect("equal")
+        ax.set_xlabel("x - x_BH [M]   [flow comes from +x]")
+        ax.set_ylabel("y [M]")
+    fig.suptitle(
+        title + "; dashed: Mach cone asin(c_s0/v)", fontsize=9
+    )
+    fig.tight_layout()
+    return fig
+
+
+def cone_profile(run, out, x, y, R, v_bh):
+    """downstream <rho/rho0>(theta), theta measured from the -x axis, in three
+    radial shells: angle of the density peak (the smeared Mach cone of the
+    linear wake) and where the excess over rho0 falls to half of the peak's"""
+    X, Y = np.meshgrid(x, y)
+    r = np.hypot(X, Y)
+    th = np.degrees(np.arctan2(Y, -X))
+    rmax = min(-x[0], y[-1])
+    edges = np.array([0.25, 0.47, 0.68, 0.9]) * rmax
+    bins = np.arange(0, 92.5, 2.5)
+    thc = 0.5 * (bins[1:] + bins[:-1])
+    pred = run.mach_angle(v_bh)
+    cols, summary = [thc], []
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    for r0, r1 in zip(edges[:-1], edges[1:]):
+        shell = (r > r0) & (r < r1) & np.isfinite(R)
+        prof = np.array(
+            [
+                R[shell & (th >= a) & (th < b)].mean()
+                if (shell & (th >= a) & (th < b)).any()
+                else np.nan
+                for a, b in zip(bins[:-1], bins[1:])
+            ]
+        )
+        cols.append(prof)
+        ps = smooth_edge(np.nan_to_num(prof, nan=1.0), 3)
+        inner = thc < 80
+        i_pk = int(np.argmax(np.where(inner, ps, -np.inf)))
+        half = 1 + 0.5 * (ps[i_pk] - 1)
+        beyond = np.where((np.arange(len(ps)) > i_pk) & (ps < half))[0]
+        th_half = thc[beyond[0]] if len(beyond) else np.nan
+        summary.append((r0, r1, thc[i_pk], ps[i_pk], th_half))
+        ax.plot(thc, prof, label=f"r = {r0:.0f}-{r1:.0f} M")
+    ax.axvline(pred, color="k", ls="--", lw=0.8)
+    ax.axhline(1, color="0.6", lw=0.6)
+    ax.set_xlabel("angle from the downstream axis [deg]")
+    ax.set_ylabel("<rho/rho0>")
+    ax.set_title(
+        f"v_BH = {v_bh:.4f}: Mach angle asin(c_s0/v) = {pred:.1f} deg (dashed)",
+        fontsize=9,
+    )
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "cone_profile.png"), dpi=110)
+    plt.close(fig)
+    head = (
+        f"{run.field}: v_BH = {v_bh:.4f}, M0 = {v_bh / run.cs0:.3f}, Mach angle "
+        f"asin(c_s0/v) = {pred:.2f} deg (DM rest frame = grid lengths)\n"
+        + "".join(
+            f"shell r = {a:.0f}-{b:.0f} M: density peak at {p:.1f} deg "
+            f"(<rho/rho0> = {h:.3f}), half of the excess at {q:.1f} deg\n"
+            for a, b, p, h, q in summary
+        )
+        + "theta  <rho/rho0> per shell"
+    )
+    np.savetxt(os.path.join(out, "cone_profile.txt"), np.array(cols).T, fmt="%8.3f", header=head)
+    for a, b, p, h, q in summary:
+        print(
+            f"cone: r = {a:.0f}-{b:.0f} M, density peak at {p:.1f} deg, half excess "
+            f"at {q:.1f} deg (Mach angle {pred:.1f} deg)"
+        )
+
+
+def late_average(run, out, snaps, avg_from):
+    """level-0 maps averaged over the snapshots at t >= avg_from (default: the
+    last 2/3 of the constant-velocity phase after the ramp), which removes the
+    aliased 2 omega0 oscillation and the transients, and the cone profile"""
+    t_last = snaps[-1][1]
+    t_end = run.ramp_start + run.ramp_duration if run.ramp_duration > 0 else 0.0
+    if avg_from is None:
+        if t_last <= t_end:
+            print("late average: skipped, the velocity ramp has not finished")
+            return
+        avg_from = t_end + (t_last - t_end) / 3
+    use = [(fn, t) for fn, t in snaps if t >= avg_from]
+    if len(use) < 2:
+        print(f"late average: skipped, < 2 snapshots at t >= {avg_from:.0f}")
+        return
+    vs = run.v_bh([t for _, t in use])
+    if np.ptp(vs) > 1e-3 * np.abs(vs).max():
+        print("late average: warning, v_BH changes over the averaging window")
+    accR = accM = None
+    for fn, _ in use:
+        t, patches, _, x_extent = read_layer(fn)
+        xc = run.num("center", 0.5 * x_extent)
+        x, y, R, M = level0_grid(run, patches, xc, float(run.v_bh(t)))
+        accR = R if accR is None else accR + R
+        accM = M if accM is None else accM + M
+    R, M = accR / len(use), accM / len(use)
+    v = float(vs[-1])
+    ts = np.array([t for _, t in use])
+    np.savez(os.path.join(out, "late_average.npz"), x=x, y=y, rho=R, mach=M, t=ts, v=v)
+    title = (
+        f"{run.field}: level 0 averaged over {len(use)} snapshots, "
+        f"t = {ts[0]:.0f}-{ts[-1]:.0f} M, v_BH = {v:.4f}, M0 = {v / run.cs0:.2f}"
+    )
+    fig = full_map_figure(run, x, y, R, M, v, title, rho_range=(0.85, 1.3))
+    fig.savefig(os.path.join(out, "late_average.png"), dpi=90)
+    plt.close(fig)
+    if v > run.cs0:
+        cone_profile(run, out, x, y, R, v)
+
+
+def evolution_figure(
+    run, out, snaps, evo_times=None, ncols=6, per_row=6, name="evolution.png",
+    label="", mach_center=None, rho_contours=None,
+):
+    """one figure of whole-domain (level 0) maps at a few times, left to right:
+    rho/rho0 above Mach for each time, wrapped into strips of per_row times.
+    The given times, or ncols times evenly spaced up to the last snapshot
+    (nearest snapshots). mach_center = (vmin, 1, vmax) of the Mach scale
+    (default MACH_NORM, white at M = 1); rho_contours adds white rho/rho0
+    contours (shape of a saturated core)"""
+    ts = np.array([t for _, t in snaps])
+    if evo_times is None or len(evo_times) == 0:
+        evo_times = ts[-1] * np.arange(1, ncols + 1) / ncols
+    idx = sorted({int(np.argmin(np.abs(ts - tt))) for tt in evo_times})
+    n = len(idx)
+    nstrip, ncol = -(-n // per_row), min(n, per_row)
+    kws = (dict(cmap="viridis", vmin=0.8, vmax=1.4), mach_kw(mach_center or MACH_NORM))
+    fig, axs = plt.subplots(
+        2 * nstrip, ncol, figsize=(2.9 * ncol + 1.3, 3.2 * 2 * nstrip),
+        sharex=True, sharey=True, squeeze=False, layout="constrained",
+    )
+    ims = [None, None]
+    for k, i in enumerate(idx):
+        s, c = divmod(k, per_row)
+        t, patches, _, x_extent = read_layer(snaps[i][0])
+        xc = run.num("center", 0.5 * x_extent)
+        v = float(run.v_bh(t))
+        x, y, R, M = level0_grid(run, patches, xc, v)
+        for row, A in enumerate((R, M)):
+            ax = axs[2 * s + row, c]
+            for sgn in (1, -1):
+                ims[row] = ax.pcolormesh(x, sgn * y, A, shading="auto", **kws[row])
+                if row == 0 and rho_contours:
+                    ax.contour(x, sgn * y, A, levels=rho_contours, colors="w", linewidths=0.5)
+            draw_cone(ax, run, v, max(-x[0], x[-1]))
+            ax.set_xlim(x[0], x[-1])
+            ax.set_ylim(-y[-1], y[-1])
+            ax.set_aspect("equal")
+            ax.tick_params(labelsize=8)
+        axs[2 * s, c].set_title(
+            f"t = {t:.0f} M\nv = {v:.3f}, M0 = {v / run.cs0:.2f}", fontsize=9
+        )
+    for k in range(n, nstrip * per_row):  # empty slots of the last strip
+        s, c = divmod(k, per_row)
+        axs[2 * s, c].set_visible(False)
+        axs[2 * s + 1, c].set_visible(False)
+    for r in range(2 * nstrip):
+        axs[r, 0].set_ylabel(("rho/rho0" if r % 2 == 0 else "Mach") + "\ny [M]", fontsize=9)
+    for c in range(ncol):
+        axs[-1, c].set_xlabel("x - x_BH [M]", fontsize=9)
+    for s in range(nstrip):  # one bar per row: bars over non-adjacent rows overlap
+        fig.colorbar(ims[0], ax=axs[2 * s, :], shrink=0.9, label="rho/rho0")
+        fig.colorbar(
+            ims[1], ax=axs[2 * s + 1, :], shrink=0.9,
+            label="Mach (BH frame), white: M = 1",
+        )
+    extra = ""
+    if rho_contours:
+        extra += "; white lines: rho/rho0 = " + ", ".join(f"{c:g}" for c in rho_contours)
+    fig.suptitle(
+        f"{label}{run.field}: whole domain (level 0, z = 0), flow from +x; "
+        f"dashed: Mach cone asin(c_s0/v); c_s0 = {run.cs0:.3f}{extra}",
+        fontsize=10,
+    )
+    fig.savefig(os.path.join(out, name), dpi=110)
+    plt.close(fig)
+    print(f"{name}: t =", ", ".join(f"{ts[i]:.0f}" for i in idx))
+
+
+def formation_times(run, t_last, n=12):
+    """n times from M0 = 0.9 (just before the BH goes supersonic) to a
+    quarter of the ramp duration after the ramp ends, or None if the run
+    does not cross Mach 1"""
+    if run.ramp_duration <= 0 or not (run.v_i < run.cs0 < run.v_f):
+        return None
+    tt = np.linspace(run.ramp_start, run.ramp_start + run.ramp_duration, 2001)
+    t0 = tt[np.argmax(run.v_bh(tt) >= max(0.9 * run.cs0, run.v_i))]
+    t1 = min(t_last, run.ramp_start + 1.25 * run.ramp_duration)
+    return np.linspace(t0, t1, n) if t1 > t0 else None
+
+
+def subsonic_times(run, ts, n=12):
+    """n times from the first snapshot after t = 0 to the last snapshot
+    where the BH is still subsonic, or None if there are fewer than two"""
+    ts = np.asarray(ts)
+    sub = ts[(ts > 0) & (run.v_bh(ts) < run.cs0)]
+    return np.linspace(sub[0], sub[-1], n) if len(sub) > 1 else None
+
+
+def cadence_note(run, steps, times):
+    """warn when the plot cadence aliases the 2 omega0 oscillation of rho"""
+    if len(times) < 2:
+        return ""
+    dt_plot = float(np.median(np.diff(times)))
+    P = math.pi / run.omega0
+    frac = (dt_plot / P) % 1
+    if min(frac, 1 - frac) < 0.1:
+        return ""
+    i = int(np.argmax(np.asarray(steps) > 0))
+    dt0 = times[i] / steps[i]
+    n0 = round(dt_plot / P)  # stay close to the present cadence
+    best = min(
+        (abs(round(n * P / dt0) * dt0 / P - n), round(n * P / dt0), n)
+        for n in range(max(1, n0 - 2), n0 + 3)
+    )
+    return (
+        f"plot files every {dt_plot:g} M = {dt_plot / P:.2f} periods of rho "
+        f"(pi/omega0 = {P:.1f} M), so single snapshots alias its 2 omega0 "
+        f"oscillation; plot_interval = {best[1]} ({best[2]} periods) would "
+        f"sample a fixed phase"
+    )
+
+
+def snapshots(
+    run, out, maps_every, maps_steps, threshold, shock="auto", avg_from=None,
+    evo_times=None,
+):
     files = sorted(
         glob.glob(os.path.join(run.hdf5_dir, run.plot_prefix + "*.3d.hdf5"))
     )
     if not files:
         print("no plot files found in", run.hdf5_dir)
         return
-    rows, profiles = [], {}
+    rows, profiles, snaps = [], {}, []
+    find_shock = None
     for n, fn in enumerate(files):
         step = int(fn.split("_")[-1].split(".")[0])
         t, patches, names, x_extent = read_layer(fn, row_only=True)
         if run.field is None:
             run.set_field("complex" if "phi_Re" in names else "real")
+        if find_shock is None:
+            find_shock = shock == "on" or (shock == "auto" and run.fluid)
+            print(run.regime() + ("" if find_shock else ": no shock search"))
+        snaps.append((fn, t))
         xc = run.num("center", 0.5 * x_extent)
         v = float(run.v_bh(t))
         d, rr, mm = axis_profile(run, patches, xc, v)
         profiles[f"s{step}"] = np.array([d, rr, mm])
         r_rho, r_mach, lam_rip, m_far, rho_far = shock_position(
-            run, d, rr, mm, threshold
+            run, d, rr, mm, threshold, v, find_shock
         )
-        rows.append((step, t, v, v / run.cs0, r_rho, r_mach, lam_rip, m_far, rho_far))
+        rows.append(
+            (step, t, v, v / run.cs0, r_rho, r_mach, lam_rip, m_far, rho_far, run.lambda_B(v))
+        )
         last = n == len(files) - 1
         if (maps_steps and step in maps_steps) or (
             not maps_steps and maps_every > 0 and (n % maps_every == 0 or last)
         ):
             t, patches, _, _ = read_layer(fn)
             plot_map(run, t, patches, xc, v, out, step)
+            x, y, R, M = level0_grid(run, patches, xc, v)
+            fig = full_map_figure(
+                run, x, y, R, M, v,
+                f"{run.field}  t = {t:.0f} M, v_BH = {v:.4f}, M0 = {v / run.cs0:.2f}, level 0",
+            )
+            fig.savefig(os.path.join(out, f"maps_full_{step:06d}.png"), dpi=90)
+            plt.close(fig)
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.plot(d / run.rsg, rr, label="rho/rho0")
             ax.plot(d / run.rsg, mm, label="Mach")
@@ -428,22 +806,41 @@ def snapshots(run, out, maps_every, maps_steps, threshold):
     np.savez(os.path.join(out, "axis_profiles.npz"), **profiles)
 
     rows = np.array(rows)
+    note = cadence_note(run, rows[:, 0], rows[:, 1])
+    if note:
+        print("note:", note)
+    shock_line = (
+        f"shock = outermost upstream point where the profile smoothed over "
+        f"one ripple wavelength has rho/rho0 > {threshold} (or Mach < 1)"
+        if find_shock
+        else "no shock search in this regime (--shock on forces it): shock columns are nan"
+    )
     np.savetxt(
         os.path.join(out, "shock_vs_time.txt"),
         rows,
-        fmt="%7d %8.1f %7.4f %6.3f %8.2f %8.2f %7.2f %7.3f %7.4f",
+        fmt="%7d %8.1f %7.4f %6.3f %8.2f %8.2f %7.2f %7.3f %7.4f %8.2f",
         header=(
             f"{run.field}: cs0={run.cs0:.4f} rsg={run.rsg:.2f} M_t={run.M_t:.3f}\n"
-            f"shock = outermost upstream point where the profile smoothed over "
-            f"one ripple wavelength has rho/rho0 > {threshold} (or Mach < 1)\n"
-            "step t v_BH M0 shock_rho shock_mach ripple_lambda Mach_far rho_far"
+            f"{run.regime()}\n{shock_line}\n"
+            "ripple_lambda: measured on the upstream axis; lambda_B: Bogoliubov "
+            "ripples standing in the BH frame (nan if subsonic)\n"
+            + (f"note: {note}\n" if note else "")
+            + "step t v_BH M0 shock_rho shock_mach ripple_lambda Mach_far rho_far lambda_B"
         ),
     )
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(rows[:, 1], rows[:, 4] / run.rsg, "o-", ms=3, label="shock (<rho>)")
-    ax.plot(rows[:, 1], rows[:, 5] / run.rsg, "s", ms=3, alpha=0.6, label="shock (<M>=1)")
+    if find_shock:
+        ax.plot(rows[:, 1], rows[:, 4] / run.rsg, "o-", ms=3, label="shock (<rho>)")
+        ax.plot(rows[:, 1], rows[:, 5] / run.rsg, "s", ms=3, alpha=0.6, label="shock (<M>=1)")
+        ax.set_ylabel("upstream shock position / r_sg")
+    else:
+        ax.plot(rows[:, 1], rows[:, 6], "o", ms=3, label="ripple wavelength, upstream axis")
+        ax.plot(rows[:, 1], rows[:, 9], color="C1", label="lambda_B(v_BH), Bogoliubov")
+        if np.isfinite(rows[:, 9]).any():  # lambda_B -> inf as M0 -> 1
+            ax.set_ylim(0, 3 * np.nanmin(rows[:, 9]))
+        ax.set_ylabel("wavelength [M]")
+        ax.set_title(run.regime() + ": no shock search", fontsize=9)
     ax.set_xlabel("t [M]")
-    ax.set_ylabel("upstream shock position / r_sg")
     ax.grid(alpha=0.3)
     ax2 = ax.twinx()
     ax2.plot(rows[:, 1], rows[:, 3], color="k", lw=1, label="M0(t)")
@@ -455,6 +852,20 @@ def snapshots(run, out, maps_every, maps_steps, threshold):
     fig.savefig(os.path.join(out, "shock_vs_time.png"), dpi=110)
     plt.close(fig)
     print(f"snapshots: {len(files)} plot files, last t = {rows[-1, 1]:.0f}")
+    late_average(run, out, snaps, avg_from)
+    evolution_figure(run, out, snaps, evo_times)
+    times = subsonic_times(run, [t for _, t in snaps])
+    if times is not None:
+        evolution_figure(
+            run, out, snaps, times, name="subsonic.png", label="Subsonic phase, ",
+            mach_center=(0.3, 1.0, 1.7), rho_contours=[1.1, 1.5, 2, 3],
+        )
+    times = formation_times(run, snaps[-1][1])
+    if times is not None:
+        evolution_figure(
+            run, out, snaps, times, name="cone_formation.png",
+            label="Mach-cone formation, ",
+        )
 
 
 def main():
@@ -465,14 +876,36 @@ def main():
     ap.add_argument("--maps-steps", default="", help="comma-separated steps")
     ap.add_argument("--rho-threshold", type=float, default=1.15)
     ap.add_argument("--no-hdf5", action="store_true", help="time series only")
+    ap.add_argument(
+        "--shock",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help="upstream shock search: auto = only in the fluid regime",
+    )
+    ap.add_argument(
+        "--avg-from",
+        type=float,
+        default=None,
+        help="start time of the late average (default: last 2/3 after the ramp)",
+    )
+    ap.add_argument(
+        "--evo-times",
+        default="",
+        help="comma-separated times of the evolution.png columns "
+        "(default: 6 evenly spaced up to the end)",
+    )
     args = ap.parse_args()
 
     run = Run(args.params)
     out = args.out or os.path.join(run.rundir, "analysis")
     os.makedirs(out, exist_ok=True)
     steps = [int(s) for s in args.maps_steps.split(",") if s]
+    evo_times = [float(s) for s in args.evo_times.split(",") if s]
     if not args.no_hdf5:
-        snapshots(run, out, args.maps_every, steps, args.rho_threshold)
+        snapshots(
+            run, out, args.maps_every, steps, args.rho_threshold, args.shock,
+            args.avg_from, evo_times,
+        )
     if run.field is None:
         # no plot files read: guess the field from the params file
         complex_vars = "phi_Re" in " ".join(run.params.get("plot_vars", []))
