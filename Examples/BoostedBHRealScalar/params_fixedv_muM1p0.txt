@@ -100,6 +100,12 @@ L_full = 1920
 # Maximum number of times you can regrid above coarsest level
 max_level = 5 # There are (max_level+1) grids, so min is zero
 
+# Half-width (in M, around the BH) of the fixed refinement cube of levels
+# 1..max_level (FixedBoxesTaggingCriterion). level 1 = +-470 M = 1.5 r_sg (shock region, dx 2.5 M);
+# levels 2-5 only cover the BH neighbourhood. Leaving this out gives the old
+# FixedGridsTaggingCriterion layout, L 2^-(l+1) for level l (N cells per level)
+level_half_widths = 470 64 32 16 8
+
 # Frequency of regridding at each level and thresholds on the tagging
 # Need one for each level except the top one, ie max_level items
 # Generally you do not need to regrid frequently on every level

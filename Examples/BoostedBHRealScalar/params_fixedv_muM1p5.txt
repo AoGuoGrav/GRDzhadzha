@@ -100,6 +100,12 @@ L_full = 1280
 # Maximum number of times you can regrid above coarsest level
 max_level = 5 # There are (max_level+1) grids, so min is zero
 
+# Half-width (in M, around the BH) of the fixed refinement cube of levels
+# 1..max_level (FixedBoxesTaggingCriterion). level 1 = +-300 M = 1.5 r_sg (shock region, dx 1.67 M);
+# levels 2-5 only cover the BH neighbourhood. Leaving this out gives the old
+# FixedGridsTaggingCriterion layout, L 2^-(l+1) for level l (N cells per level)
+level_half_widths = 300 64 32 16 8
+
 # Frequency of regridding at each level and thresholds on the tagging
 # Need one for each level except the top one, ie max_level items
 # Generally you do not need to regrid frequently on every level
@@ -161,9 +167,10 @@ extrapolation_order = 0
 # the field oscillation needs omega * dt_coarsest < 0.2; here
 # omega0 * dt_coarsest = 1.5149 * 3.3333 * 0.032744 = 0.165 (19 steps per pi/omega0)
 # dx_coarsest = 3.33 M: lambda_dB/dx = 9.7; finest dx = 3.33/32 = 0.104 M
-# half-box 640 M = 3.2 r_sg; r_sg/v = 1538 M, so stop_time ~ 3.9 flow-through times
+# half-box 640 M = 3.2 r_sg; r_sg/v = 1538 M, so stop_time ~ 2.6 flow-through times
+# (restart from the last checkpoint if shock_vs_time is still drifting)
 dt_multiplier = 0.032744
-stop_time = 6000.0
+stop_time = 4000.0
 #max_steps = 4
 
 nan_check = 1

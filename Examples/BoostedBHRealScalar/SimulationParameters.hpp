@@ -42,6 +42,15 @@ class SimulationParameters : public FixedBGSimulationParametersBase
         pp.load("bh_velocity_final", bh_velocity_final, bg_params.velocity);
         pp.load("ramp_start", ramp_start, 0.0);
         pp.load("ramp_duration", ramp_duration, 0.0);
+
+        // half-width of the fixed refinement cube of levels 1..max_level
+        // around the BH; the default L 2^-(l+1) for level l reproduces
+        // FixedGridsTaggingCriterion (N cells across every level)
+        std::vector<double> default_half_widths(std::max(max_level, 1));
+        for (int ilev = 0; ilev < max_level; ++ilev)
+            default_half_widths[ilev] = L * pow(2.0, -(ilev + 2.0));
+        pp.load("level_half_widths", level_half_widths,
+                std::max(max_level, 1), default_half_widths);
     }
 
     //! The BH velocity at time a_time, a C^2 step between the initial and
@@ -101,6 +110,22 @@ class SimulationParameters : public FixedBGSimulationParametersBase
                     (bg_params.center[idir] <= (ivN[idir] + 1) * coarsest_dx),
                 "should be within the computational domain");
         }
+        for (int ilev = 0; ilev < max_level; ++ilev)
+        {
+            std::string name =
+                "level_half_widths[" + std::to_string(ilev) + "]";
+            // each level must sit inside the one below it, with a margin
+            // of a few coarser cells for proper nesting
+            const double outer = (ilev == 0) ? 0.5 * L
+                                             : level_half_widths[ilev - 1];
+            const double coarser_dx = coarsest_dx * pow(2.0, -ilev);
+            warn_parameter(name, level_half_widths[ilev],
+                           (level_half_widths[ilev] > 0.0) &&
+                               (level_half_widths[ilev] <=
+                                outer - 4.0 * coarser_dx),
+                           "should be positive and nested inside the level "
+                           "below with a margin of a few cells");
+        }
     }
 
     // Collection of parameters necessary for the initial conditions
@@ -109,6 +134,8 @@ class SimulationParameters : public FixedBGSimulationParametersBase
     // (bg_params.velocity is the initial velocity of the ramp)
     BoostedBH::params_t bg_params;
     double bh_velocity_final, ramp_start, ramp_duration;
+    //! half-width of the refinement cube of level l + 1 around the BH
+    std::vector<double> level_half_widths;
 };
 
 #endif /* SIMULATIONPARAMETERS_HPP_ */

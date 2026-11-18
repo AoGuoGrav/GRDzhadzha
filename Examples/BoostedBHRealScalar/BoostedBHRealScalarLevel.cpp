@@ -17,7 +17,7 @@
 #include "MatterEvolution.hpp"
 
 // For tag cells
-#include "FixedGridsTaggingCriterion.hpp"
+#include "FixedBoxesTaggingCriterion.hpp"
 
 // Problem specific includes
 #include "EnergyConservation.hpp"
@@ -167,6 +167,11 @@ void BoostedBHRealScalarLevel::specificEvalRHS(GRLevelData &a_soln,
 void BoostedBHRealScalarLevel::computeTaggingCriterion(
     FArrayBox &tagging_criterion, const FArrayBox &current_state)
 {
-    BoxLoops::loop(FixedGridsTaggingCriterion(m_dx, m_level, m_p.L, m_p.center),
-                   current_state, tagging_criterion);
+    // cells tagged on this level form level m_level + 1, a cube of half-width
+    // level_half_widths[m_level] around the BH (no tags on the finest level)
+    const double half_width =
+        (m_level < m_p.max_level) ? m_p.level_half_widths[m_level] : 0.0;
+    BoxLoops::loop(
+        FixedBoxesTaggingCriterion(m_dx, half_width, m_p.bg_params.center),
+        current_state, tagging_criterion);
 }
