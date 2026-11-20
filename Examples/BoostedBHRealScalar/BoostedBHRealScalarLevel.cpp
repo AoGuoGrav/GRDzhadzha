@@ -11,6 +11,8 @@
 #include "NanCheck.hpp"
 #include "SetValue.hpp"
 #include "SmallDataIO.hpp"
+#include <algorithm>
+#include <functional>
 
 // For RHS update
 #include "BoostedBH.hpp"
@@ -123,6 +125,9 @@ void BoostedBHRealScalarLevel::specificPostTimeStep()
                      "BH velocity"});
             }
             integral_file.write_time_data_line(data_for_writing);
+
+            if (m_p.num_shell_radii > 0)
+                writeShellIntegrals(min_level, first_step);
         }
     }
 
@@ -141,6 +146,65 @@ void BoostedBHRealScalarLevel::specificPostTimeStep()
             my_extraction.execute_query(m_gr_amr.m_interpolator, m_p.data_path);
         }
     }
+}
+
+// Volume integrals of rhoEnergy, rhoLinMom and sourceLinMom over the nested
+// shells inner_r < r < R for every R in shell_radii. The shells are done from
+// the largest to the smallest: each pass zeroes the diagnostics outside R on
+// all levels >= a_min_level and sums them again. This destroys the
+// diagnostics outside the smallest shell, which is harmless because every
+// level >= a_min_level recomputes them before the next reduction (and the
+// diagnostics are not plotted); the coarser levels are not touched, and the
+// shells lie inside the refinement box of a_min_level, where they are covered.
+void BoostedBHRealScalarLevel::writeShellIntegrals(const int a_min_level,
+                                                   const bool a_first_step)
+{
+    std::vector<double> radii = m_p.shell_radii;
+    std::sort(radii.begin(), radii.end(), std::greater<double>());
+    const int num_shells = radii.size();
+
+    AMRReductions<VariableType::diagnostic> amr_reductions(m_gr_amr);
+    std::vector<double> QE(num_shells), Qx(num_shells), S(num_shells);
+    for (int ishell = 0; ishell < num_shells; ++ishell)
+    {
+        for (GRAMRLevel *level : m_gr_amr.get_gramrlevels())
+        {
+            if (level->level() < a_min_level)
+                continue;
+            const double dx = level->get_dx();
+            BoostedBH boosted_bh(m_p.bg_params_at(m_time), dx);
+            GRLevelData &diagnostics = const_cast<GRLevelData &>(
+                level->getLevelData(VariableType::diagnostic));
+            BoxLoops::loop(
+                ExcisionDiagnostics<ScalarFieldWithPotential, BoostedBH>(
+                    dx, m_p.center, boosted_bh, m_p.inner_r, radii[ishell]),
+                diagnostics, diagnostics, SKIP_GHOST_CELLS, disable_simd());
+        }
+        QE[ishell] = amr_reductions.sum(c_rhoEnergy);
+        Qx[ishell] = amr_reductions.sum(c_rhoLinMom);
+        S[ishell] = amr_reductions.sum(c_sourceLinMom);
+    }
+
+    // write from the smallest to the largest shell
+    std::vector<double> data_for_writing;
+    std::vector<std::string> header;
+    for (int ishell = num_shells - 1; ishell >= 0; --ishell)
+    {
+        data_for_writing.push_back(QE[ishell]);
+        data_for_writing.push_back(Qx[ishell]);
+        data_for_writing.push_back(S[ishell]);
+        const std::string r = std::to_string(static_cast<int>(radii[ishell]));
+        header.push_back("Q_E(r<" + r + ")");
+        header.push_back("Q_x(r<" + r + ")");
+        header.push_back("int S_x(r<" + r + ")");
+    }
+
+    SmallDataIO shell_file(m_p.data_path + "ShellIntegrals", m_dt, m_time,
+                           m_restart_time, SmallDataIO::APPEND, a_first_step);
+    shell_file.remove_duplicate_time_data();
+    if (a_first_step)
+        shell_file.write_header_line(header);
+    shell_file.write_time_data_line(data_for_writing);
 }
 
 // Things to do in RHS update, at each RK4 step

@@ -1,0 +1,207 @@
+# See the wiki page for an explanation of the params!
+# https://github.com/GRChombo/GRChombo/wiki/Guide-to-parameters
+
+#################################################
+# Filesystem parameters
+
+verbosity = 0
+
+# location / naming of output files
+output_path = "" # Main path for all files. Must exist!
+chk_prefix = FixedV01M15_
+plot_prefix = FixedV01M15p_
+# restart_file = BoostedBH_000000.3d.hdf5
+
+# HDF5files are written every dt = L/N*dt_multiplier*checkpoint_interval
+checkpoint_interval = 2500 # 500 M
+# set to 0 to turn off plot files (except at t=0 and t=stop_time)
+# set to -1 to never ever print plotfiles
+plot_interval = 821 # 164.2 M = 42.001 periods of rho (pi/omega0 = 3.9094 M): same phase in every frame
+num_plot_vars = 2
+plot_vars = phi Pi
+
+# subpaths - specific directories for hdf5, pout, extraction data
+# (these are created at runtime)
+hdf5_subpath = "hdf5"
+pout_subpath = "pout"
+data_subpath = "data"
+
+# change the name of output files
+# pout_prefix = "pout"
+print_progress_only_to_rank_0 = 1
+
+# ignore_checkpoint_name_mismatch = 0
+# write_plot_ghosts = 0
+
+#################################################
+# Initial Data parameters
+
+# Scalar field Initial data
+# Units: the BH mass, M = 1 (so scalar_mass = mu M, scalar_lambda = lambda M^2)
+# v = 0.1 PAIR: params_fixedv_muM08_v0p1_M1p5.txt (supersonic) and
+# params_fixedv_muM08_v0p1_M0p7.txt (subsonic) have the same mu, v, rho0, grid
+# and dt; only lambda (and phi0, to keep rho0 M^2 = 1e-4) differ.
+# V = 1/2 mu^2 phi^2 + 1/4 lambda phi^4, rho0 = V(phi0) = 1e-4 (Pi = 0 at t = 0)
+# lambda/phi0 solved with the exact c_s0 of the oscillation-averaged equation
+# of state (c_s^2 = dP/drho); the first-order c_s0 = c_NR (1 - 1.4 c_NR^2),
+# c_NR = sqrt(3x/8), agrees to < 0.1% here
+# SUPERSONIC member: x = lambda phi0^2/mu^2 = 0.0120, quartic/mass term = 0.6%
+# c_s0 = 0.06667, omega0 = 0.80359, r_sg = 2M/c_s0^2 = 450 M,
+# xi = (sqrt3/2)/(mu c_s0) = 16.2 M
+scalar_mass = 0.8
+scalar_amplitude = 0.017624821
+scalar_lambda = 24.748393
+
+# Boosted BH initial data, boost in x direction, FIXED velocity (no ramp)
+# Mach number v/c_s0 = 1.5 < M_* = (3 F* c_s0)^(-1/3) = 1.96 (detached bow shock,
+# Mdot_HL/Mdot_rad = 2.24), Mach angle asin(c_s0/v) = 41.8 deg, r_BHL = 2M/v^2 = 200 M
+# lambda_dB = 2 pi/(mu v) = 78.5 M, r_sg/lambda_dB = 5.7 (FixedVmuM08: 5.1,
+# FixedVmuM1p5: 6.4, both with clear shocks), beta = mu M/v = 8.0
+bh_mass = 1.0
+bh_velocity = 0.1 # in unit of c (i.e. 0<v<1)
+bh_velocity_final = 0.1
+ramp_start = 0.0
+ramp_duration = 0.0
+
+################################################
+# Diagnostic extraction parameters
+
+# For flux (surface) extraction
+activate_extraction = 1
+# write_extraction = 0
+
+# Set to match inner and outer radii above
+# the first two are inner_r and outer_r of EnergyIntegrals.dat (and the first
+# four columns of FluxIntegrals.dat), the others are extra spheres matching
+# the shells below, so every shell 5 < r < R has its own momentum balance
+# r = 5 on level 4 (+-20 M, dx 0.47), r = 20 on level 3 (+-40 M, dx 0.94),
+# r = 40-160 on level 2 (+-192 M, dx 1.875), r = 300, 600 on level 1
+# (+-675 M, dx 3.75); min extraction level = 1, so the integrals are written
+# every level-1 step (0.1 M)
+# R/r_sg: Mach 1.5 (r_sg = 450 M): 0.04 0.09 0.18 0.27 0.36 0.67 1.33
+#         Mach 0.7 (r_sg =  98 M): 0.20 0.41 0.82 1.22 1.63 3.06 6.12
+num_extraction_radii = 8
+extraction_levels = 4 1 3 2 2 2 2 1
+extraction_radii = 5.0 600.0 20.0 40.0 80.0 120.0 160.0 300.0
+
+# 64 x 49 points: spacing 600 pi/48 = 39 M = lambda_dB/2 on the r = 600 sphere
+num_points_phi = 64
+num_points_theta = 48
+
+# Extra volume integrals over 5 < r < R for each R (written to
+# data/ShellIntegrals.dat); the largest shell 5 < r < 600 is EnergyIntegrals.dat.
+# All inside the level-1 box (+-675 M, shells must be <= 675 - 4 dx_1 = 660 M)
+num_shell_radii = 6
+shell_radii = 20.0 40.0 80.0 120.0 160.0 300.0
+
+# For volume integrals
+# Default value is the same as activate_extraction
+# activate_excision = 1
+# By default these are set to the values of the extraction radii above
+# inner_r = 5.0
+# outer_r = 600.0
+
+#################################################
+# Grid parameters
+
+# 'N' is the number of subdivisions in each direction of a cubic box
+# 'L' is the length of the longest side of the box, dx_coarsest = L/N
+# NB - If you use reflective BC and want to specify the subdivisions and side
+# of the box were there are no symmetries, specify 'N_full' and 'L_full' instead
+# NB - if you have a non-cubic grid, you can specify 'N1' or 'N1_full',
+# 'N2' or 'N2_full' and 'N3' or 'N3_full' ( then dx_coarsest = L/N(max) )
+# NB - the N values need to be multiples of the block_factor
+# Grid shared by the Mach 1.5 and Mach 0.7 runs of the v = 0.1 pair
+# dx_coarsest = 2880/384 = 7.5 M: lambda_dB/dx = 78.5/7.5 = 10.5
+# half-box 1440 M = 3.2 r_sg of the Mach 1.5 run (as in params_fixedv_muM1p5.txt)
+N1 = 384
+N2 = 192
+N3 = 192
+
+L_full = 2880
+
+# Maximum number of times you can regrid above coarsest level
+max_level = 6 # There are (max_level+1) grids, so min is zero
+# dx per level: 7.5 3.75 1.875 0.9375 0.469 0.234 0.117 M
+
+# Half-width (in M, around the BH) of the fixed refinement cube of levels
+# 1..max_level (FixedBoxesTaggingCriterion).
+# level 1: +-675 M = 1.5 r_sg(Mach 1.5), dx 3.75 M: the bow shock region and
+#          the r = 300, 600 M spheres/shells,
+#          xi(Mach 1.5) = 16.2 M = 4.3 cells, lambda_dB = 21 cells
+# level 2: +-192 M, dx 1.875 M: spheres/shells r <= 160 M;
+#          xi(Mach 0.7) = 7.6 M = 4 cells
+# levels 3-6: BH neighbourhood only
+level_half_widths = 675 192 40 20 10 6
+
+# Frequency of regridding at each level and thresholds on the tagging
+# Need one for each level except the top one, ie max_level items
+# Generally you do not need to regrid frequently on every level
+# in this example turn off regridding on all levels
+# Level Regridding: 0   1   2   3   4   5
+regrid_interval   = 0   0   0   0   0   0
+# regrid_threshold  = 0.5
+
+# Max and min box sizes
+max_box_size = 16
+min_box_size = 16
+
+# Don't add a buffer to the tagged cells since
+# this example uses a fixed grid
+tag_buffer_size = 0
+
+# center = 512.0 0.0 0.0 # defaults to center of the grid
+
+#################################################
+# Boundary Conditions parameters
+
+#Periodic directions - 0 = false, 1 = true
+isPeriodic = 0 0 0
+# if not periodic, then specify the boundary type
+# 0 = static, 1 = sommerfeld, 2 = reflective
+# 3 = extrapolating, 4 = mixed
+# (see BoundaryConditions.hpp for details)
+hi_boundary = 3 3 3
+lo_boundary = 3 2 2
+
+# if reflective boundaries selected, must set
+# parity of all vars (in order given by UserVariables.hpp)
+# 0 = even
+# 1,2,3 = odd x, y, z
+# 4,5,6 = odd xy, yz, xz
+# 7     = odd xyz
+vars_parity            = 0 0       #phi and Pi
+vars_parity_diagnostic = 0 0 0     #chi, rhoLinMom and rhoEnergy
+		         0 0 0     #fluxLinMom, fluxEnergy and sourceLinMom
+
+# if sommerfeld boundaries selected, must select
+# non zero asymptotic values
+num_nonzero_asymptotic_vars = 0
+nonzero_asymptotic_vars = chi
+nonzero_asymptotic_values = 1.0
+
+# if you are using extrapolating BC:
+extrapolation_order = 0
+
+# if mixed boundaries selected, must specify which are extrapolating
+# (the rest are assumed to be all sommerfeld)
+#num_extrapolating_vars = 2
+#extrapolating_vars = phi Pi
+
+#################################################
+# Evolution parameters
+
+# dt will be dx*dt_multiplier on each grid level
+# the field oscillation needs omega * dt_coarsest < 0.2; here
+# omega0 * dt_coarsest = 0.8036 * 7.5 * 0.0266667 = 0.161 (19.5 steps per pi/omega0)
+# r_sg/v = 4500 M: stop_time ~ 2.4 flow-through times (late average t > ~5000 M)
+dt_multiplier = 0.0266667
+stop_time = 11000.0
+#max_steps = 4
+
+nan_check = 1
+
+# coefficient for KO numerical dissipation
+sigma = 0.5
+
+#################################################

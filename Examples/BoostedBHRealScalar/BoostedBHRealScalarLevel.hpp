@@ -37,6 +37,10 @@ class BoostedBHRealScalarLevel : public GRAMRLevel
     // to do post each time step on every level
     virtual void specificPostTimeStep();
 
+    //! Volume integrals over the nested shells inner_r < r < shell_radii[k],
+    //! written to ShellIntegrals.dat (called on the minimum extraction level)
+    void writeShellIntegrals(const int a_min_level, const bool a_first_step);
+
     //! Tell Chombo how to tag cells for regridding
     virtual void computeTaggingCriterion(FArrayBox &tagging_criterion,
                                          const FArrayBox &current_state);

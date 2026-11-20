@@ -51,6 +51,14 @@ class SimulationParameters : public FixedBGSimulationParametersBase
             default_half_widths[ilev] = L * pow(2.0, -(ilev + 2.0));
         pp.load("level_half_widths", level_half_widths,
                 std::max(max_level, 1), default_half_widths);
+
+        // optional extra volume integrals over the nested shells
+        // inner_r < r < shell_radii[k] (each <= outer_r), written to
+        // data/ShellIntegrals.dat, to see how the drag grows with the
+        // size of the integration region
+        pp.load("num_shell_radii", num_shell_radii, 0);
+        if (num_shell_radii > 0)
+            pp.load("shell_radii", shell_radii, num_shell_radii);
     }
 
     //! The BH velocity at time a_time, a C^2 step between the initial and
@@ -126,6 +134,34 @@ class SimulationParameters : public FixedBGSimulationParametersBase
                            "should be positive and nested inside the level "
                            "below with a margin of a few cells");
         }
+        if (num_shell_radii > 0)
+        {
+            check_parameter("activate_excision", activate_excision,
+                            activate_excision,
+                            "must be on for the shell_radii integrals");
+            // the shell integrals only re-excise levels >= min_level, so the
+            // shells must lie inside the refinement box of min_level
+            const int min_level =
+                activate_extraction
+                    ? extraction_params.min_extraction_level()
+                    : 0;
+            const double box_half_width =
+                (min_level > 0) ? level_half_widths[min_level - 1] : 0.5 * L;
+            for (int i = 0; i < num_shell_radii; ++i)
+            {
+                std::string name = "shell_radii[" + std::to_string(i) + "]";
+                check_parameter(name, shell_radii[i],
+                                (shell_radii[i] > inner_r) &&
+                                    (shell_radii[i] <= outer_r),
+                                "must be > inner_r and <= outer_r");
+                warn_parameter(name, shell_radii[i],
+                               shell_radii[i] <= box_half_width -
+                                                     4.0 * coarsest_dx *
+                                                         pow(2.0, -min_level),
+                               "should lie inside the refinement box of the "
+                               "minimum extraction level");
+            }
+        }
     }
 
     // Collection of parameters necessary for the initial conditions
@@ -136,6 +172,9 @@ class SimulationParameters : public FixedBGSimulationParametersBase
     double bh_velocity_final, ramp_start, ramp_duration;
     //! half-width of the refinement cube of level l + 1 around the BH
     std::vector<double> level_half_widths;
+    //! outer radii of the extra integration shells inner_r < r < R
+    int num_shell_radii;
+    std::vector<double> shell_radii;
 };
 
 #endif /* SIMULATIONPARAMETERS_HPP_ */
